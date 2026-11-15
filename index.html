@@ -3035,6 +3035,8 @@ VIEWS.home = function(){
     return '<div class="grid2">' + small.map(function(k){ return T[k]; }).join('') + wide.map(function(k){ var x = T[k]; return ['apiaries','treatments','feeding','queens'].indexOf(k) >= 0 ? x.replace('<button class="tile"', '<button class="tile" style="grid-column:1/-1;flex-direction:row;align-items:center;min-height:60px"').replace('<span class="between" style="width:100%">', '<span class="between grow">') : x; }).join('') + '</div>'; };
   SEC.today = function(){ var h = '';
     h += '<div class="between"><h2>Σήμερα</h2><span class="row" style="gap:14px"><button class="link" data-a="go" data-v="calendar">Ημερολόγιο</button><button class="link" data-a="tab" data-v="tasks">Όλες οι εργασίες</button></span></div>';
+    var fh = fireInfo(today());
+    if (fh.on) h += '<div class="row" style="gap:8px;align-items:center;margin-top:-6px"><i style="width:8px;height:8px;border-radius:4px;background:' + CAL_T.fire[1] + ';flex-shrink:0"></i><span class="small" style="color:var(--bad)">Αντιπυρική περίοδος · σε ισχύ έως ' + fmtD(fh.to) + ' · ' + (fh.left === 0 ? 'λήγει σήμερα' : plural(fh.left, 'ημέρα απομένει', 'ημέρες απομένουν')) + '</span></div>';
     if (!tasks.length) h += '<div class="card"><span class="muted small">Καμία εκκρεμότητα για σήμερα.</span></div>';
     else h += '<div class="list">' + tasks.slice(0, 4).map(taskRow).join('') + '</div>';
     return h; };
@@ -4465,8 +4467,17 @@ VIEWS.bulkInsp = function(){
   return h + '</div>';
 };
 /* ---------- calendar ---------- */
-var CAL_T = {task:['Εργασίες','var(--accent)'], treat:['Θεραπείες','var(--bad)'], rear:['Βασιλοτροφία','var(--ok)'], insp:['Επιθεωρήσεις','var(--info)'], feed:['Ταΐσματα','#2E6FD8'], harv:['Τρύγος','#B7791F'], fin:['Οικονομικά','var(--muted)']};
+var CAL_T = {task:['Εργασίες','var(--accent)'], treat:['Θεραπείες','var(--bad)'], rear:['Βασιλοτροφία','var(--ok)'], insp:['Επιθεωρήσεις','var(--info)'], feed:['Ταΐσματα','#2E6FD8'], harv:['Τρύγος','#B7791F'], fin:['Οικονομικά','var(--muted)'], fire:['Αντιπυρική','#D64510']};
 var WD_LONG = ['Κυριακή','Δευτέρα','Τρίτη','Τετάρτη','Πέμπτη','Παρασκευή','Σάββατο'];
+var FIRE_A = '05-01', FIRE_B = '10-31';
+function fireInfo(d){
+  var md = String(d).slice(5), y = Number(String(d).slice(0, 4)), on = md >= FIRE_A && md <= FIRE_B, fy = md > FIRE_B ? y + 1 : y;
+  var from = fy + '-' + FIRE_A, to = fy + '-' + FIRE_B;
+  return {on:on, from:from, to:to, left:diffDays(d, to), until:diffDays(d, from), day:diffDays(from, d) + 1, total:diffDays(from, to) + 1};
+}
+function fireBar(sub){
+  return '<div class="note n-bad" style="display:flex;align-items:center;gap:10px"><i style="width:4px;align-self:stretch;min-height:30px;border-radius:2px;background:' + CAL_T.fire[1] + ';flex-shrink:0"></i><span><b>Αντιπυρική περίοδος</b><br><span class="tiny">' + sub + '</span></span></div>';
+}
 function dayPart(d){ var x = parseD(d); return x.getMonth() * 3 + (x.getDate() <= 10 ? 0 : x.getDate() <= 20 ? 1 : 2); }
 function calIndex(ym){
   var m = {}, inM = function(d){ return d && String(d).slice(0, 7) === ym; };
@@ -4495,6 +4506,9 @@ function calIndex(ym){
     else if (e.type === 'dose') add(e.date, {k:'treat', t:t[0], s:hivesSummary(e.hives || []), done:true, a:' data-a="go" data-v="treatments"'});
   }); });
   S.finance.forEach(function(f){ add(f.date, {k:'fin', t:(f.type === 'sale' ? 'Έσοδα · ' : 'Έξοδο · ') + eur(f.amount), s:f.type === 'sale' ? (f.product || '') : (f.cat || '') + (f.note ? ' · ' + f.note : ''), done:true, a:' data-a="go" data-v="finance"'}); });
+  var fy = ym.slice(0, 4);
+  add(fy + '-' + FIRE_A, {k:'fire', t:'Έναρξη αντιπυρικής περιόδου', s:'Σε ισχύ έως ' + fmtD(fy + '-' + FIRE_B) + ' · απαγορεύεται η χρήση φωτιάς στην ύπαιθρο'});
+  add(fy + '-' + FIRE_B, {k:'fire', t:'Λήξη αντιπυρικής περιόδου', s:'Διήρκεσε από ' + fmtD(fy + '-' + FIRE_A)});
   return m;
 }
 function bloomsOn(d){ var c = dayPart(d); return S.blooms.filter(function(b){ return bInRange(b, c); }); }
@@ -4505,6 +4519,12 @@ VIEWS.calendar = function(){
   var h = '<div class="wrap nonav">' + top('Ημερολόγιο', {right:'<button class="ibtn fill" data-a="openTask" data-date="' + f.sel + '" aria-label="Νέα εργασία στις ' + fmtD(f.sel) + '">' + I.plus + '</button>'});
   h += '<div class="between"><button class="ibtn" style="border:1px solid var(--line);border-radius:12px" data-a="calMove" data-d="-1" aria-label="Προηγούμενος μήνας">' + I.back + '</button><span class="t" style="font-size:18px">' + MONTHS_N[mo] + ' ' + y + '</span><button class="ibtn" style="border:1px solid var(--line);border-radius:12px;transform:scaleX(-1)" data-a="calMove" data-d="1" aria-label="Επόμενος μήνας">' + I.back + '</button></div>';
   if (ym !== t.slice(0, 7) || f.sel !== t) h += '<button class="link" style="align-self:center;margin-top:-8px" data-a="calToday">Σήμερα</button>';
+  if (!hide.fire) {
+    var fi = fireInfo(ym + '-15'), fnow = fireInfo(t);
+    if (fi.on) h += fireBar(fmtD(fi.from) + ' – ' + fmtD(fi.to) + (fnow.on ? ' · ' + (fnow.left === 0 ? 'λήγει σήμερα' : 'σε ισχύ σήμερα, ' + plural(fnow.left, 'ημέρα απομένει', 'ημέρες απομένουν')) : ''));
+    else { var fdd = diffDays(t, fi.from);
+      if (fdd > 0 && diffDays(ym + '-01', fi.from) <= 62) h += fireBar('Ξεκινά ' + fmtD(fi.from) + (fdd <= 92 ? ' · ' + plural(fdd, 'ημέρα από σήμερα', 'ημέρες από σήμερα') : '')); }
+  }
   var cells = '';
   ['Δευ','Τρί','Τετ','Πέμ','Παρ','Σάβ','Κυρ'].forEach(function(w){ cells += '<span class="tiny muted" style="text-align:center;font-weight:600">' + w + '</span>'; });
   for (var i = 0; i < lead; i++) cells += '<span></span>';
@@ -4521,7 +4541,7 @@ VIEWS.calendar = function(){
   h += '<div class="wrapr" style="gap:6px">' + Object.keys(CAL_T).map(function(k){ var off = !!hide[k]; return '<button class="chip" style="min-height:32px;padding:0 10px;font-size:13px;display:inline-flex;align-items:center;gap:6px;opacity:' + (off ? '.45' : '1') + '" data-a="calHide" data-k="' + k + '" aria-pressed="' + !off + '"><i style="width:8px;height:8px;border-radius:4px;background:' + CAL_T[k][1] + '"></i>' + CAL_T[k][0] + '</button>'; }).join('') +
     '<button class="chip" style="min-height:32px;padding:0 10px;font-size:13px;display:inline-flex;align-items:center;gap:6px;opacity:' + (hide.bloom ? '.45' : '1') + '" data-a="calHide" data-k="bloom" aria-pressed="' + !hide.bloom + '"><i style="width:12px;height:2px;background:var(--ok)"></i>Ανθοφορίες</button></div>';
   var sel = f.sel, sd = parseD(sel), list = (idx[sel] || []).filter(function(x){ return !hide[x.k]; });
-  var order = ['task','treat','rear','insp','feed','harv','fin'];
+  var order = ['fire','task','treat','rear','insp','feed','harv','fin'];
   list.sort(function(a, b){ return (a.done ? 1 : 0) - (b.done ? 1 : 0) || order.indexOf(a.k) - order.indexOf(b.k); });
   h += '<div class="between"><h2 style="font-size:17px">' + WD_LONG[sd.getDay()] + ' ' + sd.getDate() + ' ' + MONTHS_G[sd.getMonth()] + '</h2><span class="small muted">' + (sel === t ? 'Σήμερα' : relD(sel)) + '</span></div>';
   if (list.length) h += '<div class="list">' + list.map(function(x){
