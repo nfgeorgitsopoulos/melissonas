@@ -5504,7 +5504,7 @@ async function restore(data){
     for (var j = 0; j < list.length; j++) { var o = fd(list[j]); var id = o.id; delete o.id; await put(c2, id, o); }
   }
   for (var lk in (data.logs || {})) await put('log', lk, {items: data.logs[lk]});
-  if (data.settings) await put('settings', 'main', {inspectDays: data.settings.inspectDays || 14, varroaPct: data.settings.varroaPct || 3, varroaDay: data.settings.varroaDay || 10, inspMode: data.settings.inspMode || 'detailed'});
+  if (data.settings) await put('settings', 'main', {inspectDays: data.settings.inspectDays || 14, varroaPct: data.settings.varroaPct || 3, varroaDay: data.settings.varroaDay || 10, inspMode: data.settings.inspMode || 'detailed', lastExport: data.settings.lastExport || '', home: data.settings.home || null});
   S.qMig = false;
   await put('settings', 'plants', {items: data.plants || []});
   S.stack = []; S.view = 'home';
