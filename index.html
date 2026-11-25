@@ -142,6 +142,9 @@ button.li:active,a.li:active{background:var(--sunk)}
 input[type=text],input[type=number],input[type=date],select,textarea{min-height:48px;border-radius:12px;border:1px solid var(--line);background:var(--field);padding:0 14px;font-size:16px;width:100%}
 textarea{padding:12px 14px;min-height:96px;resize:vertical}
 .badge{font-size:12px;font-weight:600;padding:4px 10px;border-radius:999px;white-space:nowrap}
+.obschip{display:inline-flex;align-items:center;gap:5px;padding:7px 12px;cursor:pointer;color:var(--accent);background:transparent;border:1px solid var(--accent);-webkit-tap-highlight-color:transparent}
+.obschip:active{background:var(--accent);color:var(--on-accent)}
+.obschip:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .b-ok{background:var(--ok-soft);color:var(--ok)} .b-mid{background:var(--warn-soft);color:var(--warn)} .b-bad{background:var(--bad-soft);color:var(--bad)} .b-off{background:var(--sunk);color:var(--muted)} .b-info{background:var(--info-soft);color:var(--info)} .b-acc{background:var(--accent-soft);color:var(--accent-ink)}
 .stat{background:var(--surface);border-radius:14px;padding:12px;display:flex;flex-direction:column;gap:2px}
 .stat .n{font-size:24px;font-weight:700;font-variant-numeric:tabular-nums}
@@ -3265,6 +3268,104 @@ function calStrip(b){
   for (var i = 0; i < 36; i++) h += '<i class="' + (bInRange(b, i) ? 'on' : '') + (i === c ? ' now' : '') + '"></i>';
   return h + '</div><div class="calm" aria-hidden="true">' + MONTHS_N.map(function(m){ return '<span>' + m.charAt(0) + '</span>'; }).join('') + '</div>';
 }
+/* ---------- bloom observations: real dates per season ---------- */
+function p2(n){ return (n < 10 ? '0' : '') + n; }
+/* which season a date belongs to (a bloom that wraps the year belongs to the season that started it) */
+function bYear(b, d){
+  d = d || today();
+  var y = Number(d.slice(0, 4)), sI = bIdx(b.fm, b.fp), eI = bIdx(b.tm, b.tp);
+  if (sI <= eI) return y;
+  /* τυλίγεται: η νέα σεζόν μετρά από το μέσο του κενού ανάμεσα σε λήξη και επόμενη έναρξη */
+  var cut = eI + Math.ceil((sI - eI) / 2);
+  return curPart(parseD(d)) < cut ? y - 1 : y;
+}
+var I_plusS = '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true" style="flex-shrink:0"><path d="M12 5v14M5 12h14"/></svg>';
+function obsOf(b, y){ return (b.obs || {})[String(y)] || null; }
+function obsYears(b){ return Object.keys(b.obs || {}).filter(function(k){ var o = b.obs[k]; return o && (o.f || o.t); }).sort().reverse(); }
+function obsLabel(b, y){ y = Number(y); return bIdx(b.fm, b.fp) > bIdx(b.tm, b.tp) ? y + '–' + String(y + 1).slice(2) : String(y); }
+/* the estimated date the stored decades point at, for that season */
+/* το εκτιμώμενο δεκαήμερο ως ζεύγος ημερομηνιών για τη συγκεκριμένη σεζόν */
+function obsWin(b, y, k){
+  var m = Number(k === 't' ? b.tm : b.fm), p = Number(k === 't' ? b.tp : b.fp);
+  var yy = Number(y) + (k === 't' && bIdx(b.fm, b.fp) > bIdx(b.tm, b.tp) ? 1 : 0);
+  var last = new Date(yy, m + 1, 0).getDate();
+  var a = [1, 11, 21][p], z = p === 2 ? last : [10, 20][p];
+  return {a: yy + '-' + p2(m + 1) + '-' + p2(a), z: yy + '-' + p2(m + 1) + '-' + p2(z), txt: PARTS[p][0] + ' ' + MONTHS_G[m]};
+}
+/* πόσες ημέρες έξω από το δεκαήμερο: 0 αν έπεσε μέσα, αρνητικό αν νωρίτερα */
+function obsOff(b, y, k, got){
+  var w = obsWin(b, y, k);
+  if (got < w.a) return diffDays(w.a, got);
+  if (got > w.z) return diffDays(w.z, got);
+  return 0;
+}
+function obsDiffTxt(b, y, k, got){
+  var w = obsWin(b, y, k), d = obsOff(b, y, k, got), a = Math.abs(d);
+  if (d === 0) return 'μέσα στην εκτίμηση (' + w.txt + ')';
+  return plural(a, 'ημέρα', 'ημέρες') + (d > 0 ? ' μετά' : ' πριν') + ' το εκτιμώμενο δεκαήμερο (' + w.txt + ')';
+}
+function decTxt(dt){ var q = dt.split('-'), m = Number(q[1]) - 1, day = Number(q[2]); return PARTS[day <= 10 ? 0 : day <= 20 ? 1 : 2][0] + ' ' + MONTHS_G[m]; }
+function fmtDS(s){ if (!s) return ''; var q = s.split('-'); return Number(q[2]) + '/' + Number(q[1]); }
+/* μέση πραγματική ημερομηνία σε όλες τις καταγεγραμμένες σεζόν, αναγμένη στην τρέχουσα */
+function obsAvg(b, k){
+  var n = 0, sum = 0;
+  obsYears(b).forEach(function(y){
+    var o = b.obs[y]; if (o && o[k]) { sum += diffDays(obsWin(b, y, k).a, o[k]); n++; }
+  });
+  if (!n) return null;
+  var off = Math.round(sum / n), cur = obsWin(b, bYear(b), k);
+  var date = addDays(cur.a, off);
+  return {n: n, off: off, date: date, dec: decTxt(date), same: decTxt(date) === cur.txt, est: cur.txt};
+}
+function obsBadge(b){
+  var o = obsOf(b, bYear(b)); if (!o) return '';
+  if (o.f && o.t) return '<span class="badge b-ok">' + fmtDS(o.f) + ' – ' + fmtDS(o.t) + '</span>';
+  if (o.f) return '<span class="badge b-ok">Άνθισε ' + fmtDS(o.f) + '</span>';
+  return '<span class="badge b-off">Τέλος ' + fmtDS(o.t) + '</span>';
+}
+/* μικρό πατητό τσιπ μέσα στην ίδια κάρτα, δίπλα στα υπόλοιπα σήματα */
+function obsChip(b){
+  var st = bloomState(b); if (st === 'off') return '';
+  var o = obsOf(b, bYear(b)) || {};
+  var k = !o.f ? 'f' : (!o.t && st === 'active') ? 't' : '';
+  if (!k) return '';
+  var lab = k === 'f' ? 'Άνθισε σήμερα' : 'Τελείωσε σήμερα';
+  return '<span class="badge obschip" role="button" tabindex="0" data-a="obsMark" data-k="' + k + '" data-id="' + b.id + '" aria-label="' + esc(b.plant) + ': ' + lab + '">' + I_plusS + ' ' + lab + '</span>';
+}
+function obsBox(b){
+  var y = bYear(b), o = obsOf(b, y) || {}, any = !!(o.f || o.t);
+  var h = '<span class="lbl">Πραγματικές ημερομηνίες</span>' +
+    '<div class="card" style="gap:10px"><span class="between"><span class="t" style="font-size:15px">Σεζόν ' + obsLabel(b, y) + '</span>' +
+    (any ? '<button class="ibtn" data-a="obsClear" data-y="' + y + '" aria-label="Διαγραφή παρατήρησης">' + I.trash + '</button>' : '<span class="tiny muted">χωρίς καταγραφή</span>') + '</span>';
+  [['f', 'Άνθισε', 'Άνθισε σήμερα'], ['t', 'Τελείωσε', 'Τελείωσε σήμερα']].forEach(function(r){
+    var k = r[0], got = o[k], est = obsWin(b, y, k);
+    h += '<div class="srow"><label for="ob-' + k + '">' + r[1] + '</label>' +
+      '<input id="ob-' + k + '" type="date" data-a-change="obsDate" data-k="' + k + '" data-y="' + y + '" value="' + esc(got || '') + '" style="width:auto;max-width:58%"></div>' +
+      (got ? '<span class="tiny muted" style="margin-top:-6px">' + obsDiffTxt(b, y, k, got) + '</span>'
+           : '<div class="row" style="margin-top:-4px"><button class="btn sm" data-a="obsMark" data-k="' + k + '">' + r[2] + '</button><span class="tiny muted">εκτίμηση: ' + est.txt + '</span></div>');
+  });
+  if (o.f && o.t) {
+    var dur = diffDays(o.f, o.t) + 1;
+    h += dur > 0 ? '<span class="small"><b>' + plural(dur, 'ημέρα', 'ημέρες') + '</b> διάρκεια ανθοφορίας</span>'
+      : '<div class="note n-bad" style="margin:0">Η λήξη είναι πριν την έναρξη. Διόρθωσε μία από τις δύο ημερομηνίες.</div>';
+  }
+  h += '</div>';
+  var prev = obsYears(b).filter(function(k){ return String(k) !== String(y); });
+  if (prev.length) {
+    h += '<span class="lbl">Προηγούμενες σεζόν</span><div class="list">' + prev.map(function(k){
+      var o2 = b.obs[k], dur = (o2.f && o2.t) ? diffDays(o2.f, o2.t) + 1 : 0;
+      return '<div class="li"><span class="grow"><span class="t">' + obsLabel(b, k) + '</span><span class="tiny muted">' +
+        (o2.f ? 'άνθισε ' + fmtD(o2.f) : 'έναρξη —') + ' · ' + (o2.t ? 'τελείωσε ' + fmtD(o2.t) : 'λήξη —') +
+        (dur > 0 ? ' · ' + plural(dur, 'ημέρα', 'ημέρες') : '') + '</span></span>' +
+        '<button class="ibtn" data-a="obsClear" data-y="' + k + '" aria-label="Διαγραφή σεζόν ' + k + '">' + I.trash + '</button></div>';
+    }).join('') + '</div>';
+  }
+  var av = obsAvg(b, 'f');
+  if (av && av.n >= 2) h += '<div class="note ' + (av.same ? 'n-ok' : 'n-acc') + '">Σε ' + plural(av.n, 'σεζόν', 'σεζόν') + ' με καταγραφή, η έναρξη πέφτει κατά μέσο όρο στις <b>' + fmtD(av.date) + '</b>, δηλαδή ' + av.dec + '. ' +
+    (av.same ? 'Συμφωνεί με την εκτίμηση που έχεις βάλει παραπάνω.' : 'Η εκτίμησή σου λέει ' + av.est + ' — σκέψου να τη διορθώσεις σε ' + av.dec + '.') + '</div>';
+  else h += '<span class="tiny muted">Κάθε σεζόν που καταγράφεις τις πραγματικές ημερομηνίες, η εικόνα για το δικό σου σημείο γίνεται ακριβέστερη. Από τη δεύτερη σεζόν και μετά εμφανίζεται εδώ η μέση ημερομηνία έναρξης.</span>';
+  return h;
+}
 VIEWS.blooms = function(){
   var fAp = S.params.ap && apiary(S.params.ap) ? S.params.ap : 'all', c = curPart(), sort = S.form.sort || 'active';
   var SORTS = [['alpha','Αλφαβητικά'],['chrono','Χρονολογικά'],['active','Σε εξέλιξη'],['soon','Επερχόμενες'],['off','Εκτός περιόδου']];
@@ -3295,7 +3396,7 @@ VIEWS.blooms = function(){
       var sb = st === 'active' ? '<span class="badge b-ok">Σε εξέλιξη</span>' : st === 'soon' ? '<span class="badge b-acc">' + (function(){ var d = bDaysToStart(b); return d === 0 ? 'Ξεκινά σήμερα' : d === 1 ? 'Ξεκινά αύριο' : 'Ξεκινά σε ' + d + ' ημέρες'; })() + '</span>' : '<span class="badge b-off">Εκτός περιόδου</span>';
       h += '<button class="card" style="border:none;text-align:left;color:inherit;width:100%;gap:10px" data-a="go" data-v="bloomForm" data-id="' + b.id + '">' +
         '<span class="between" style="align-items:flex-start"><span class="grow"><span class="t" style="font-size:16px">' + esc(b.plant) + '</span><span class="small muted">' + bPeriod(b) + '</span><span class="tiny muted">' + bDates(b) + '</span></span>' + sb + '</span>' +
-        '<span class="wrapr"><span class="badge ' + GIVES[b.gives][1] + '">' + GIVES[b.gives][0] + '</span></span>' + calStrip(b) + '</button>';
+        '<span class="wrapr"><span class="badge ' + GIVES[b.gives][1] + '">' + GIVES[b.gives][0] + '</span>' + obsBadge(b) + obsChip(b) + '</span>' + calStrip(b) + '</button>';
     });
   });
   if (!any && pool.length) h += '<div class="card small muted">' + ({active:'Καμία ανθοφορία σε εξέλιξη τώρα.', soon:'Καμία ανθοφορία δεν ξεκινά τις επόμενες 30 ημέρες.', off:'Όλες οι ανθοφορίες είναι σε εξέλιξη ή ξεκινούν σύντομα.'})[sort] + '</div>';
@@ -3334,6 +3435,7 @@ VIEWS.bloomForm = function(){
         (bIdx(pv.fm, pv.fp) > bIdx(pv.tm, pv.tp) ? '<span class="tiny muted">Η λήξη είναι πριν την έναρξη μέσα στο έτος, άρα η ανθοφορία συνεχίζει στο επόμενο έτος.</span>' : '') + '</div>';
     }
   }
+  if (b) h += obsBox(b);
   h += '<button class="btn primary block" data-a="saveBloom" aria-disabled="' + (!ok) + '">Αποθήκευση</button>';
   if (b) h += '<button class="btn danger block" data-a="delBloom">' + I.trash + ' Διαγραφή ανθοφορίας</button>';
   return h + '</div>';
@@ -4043,6 +4145,8 @@ VIEWS.hive = function(){
   return h + '</div>';
 };
 
+/* ασφαλής ανάγνωση επιπέδου: παλιές ή ελλιπείς καταχωρίσεις δεν ρίχνουν την οθόνη */
+function lvTxt(v){ return (v != null && LEVELS[v]) ? LEVELS[v].toLowerCase() : '—'; }
 function eventText(e, forHive){
   var many = (e.hives || []).length > 1 && !forHive ? ' · ' + plural(e.hives.length, 'κυψέλη', 'κυψέλες') : '';
   if (e.type === 'inspection') {
@@ -4050,7 +4154,7 @@ function eventText(e, forHive){
     if (e.laying) bits.push('ωοτοκία: ' + LAYING.filter(function(o){ return o[0] === e.laying; })[0][1].toLowerCase());
     if (e.temper) bits.push(TEMPER.filter(function(o){ return o[0] === e.temper; })[0][1].toLowerCase());
     if ((e.problems || []).length) bits.push('προβλήματα: ' + e.problems.map(pName).join(', ').toLowerCase());
-    if (e.open != null) bits.push('ανοιχτός γόνος: ' + LEVELS[e.open].toLowerCase() + ', σφραγισμένος: ' + LEVELS[e.sealed].toLowerCase() + ', μέλισσες: ' + LEVELS[e.bees].toLowerCase() + (e.pollen != null ? ', γύρη: ' + LEVELS[e.pollen].toLowerCase() : ''));
+    if (e.open != null) bits.push('ανοιχτός γόνος: ' + lvTxt(e.open) + ', σφραγισμένος: ' + lvTxt(e.sealed) + ', μέλισσες: ' + lvTxt(e.bees) + (e.pollen != null ? ', γύρη: ' + lvTxt(e.pollen) : ''));
     if (e.brood != null) bits.push(e.brood + ' πλαίσια γόνου');
     if (e.honey != null) bits.push(e.honey + ' πλαίσια μελιού');
     if (e.varroa) bits.push('βαρρόα: ' + vText(e.varroa) + ' (' + VMETHODS[e.varroa.method].toLowerCase() + ')');
@@ -4065,9 +4169,19 @@ function eventText(e, forHive){
   }
   return [e.text || 'Αλλαγή', '', '#6B6960'];
 }
+/* γραμμή καιρού κάτω από την καταχώριση· στον τρύγο πρώτα το επταήμερο */
+function wxLine(e){
+  var w = e && e.wx; if (!w) return '';
+  var s = e.type === 'harvest'
+    ? 'βροχή 7ημ. ' + num(w.rain7 || 0) + 'mm · ' + Math.round(w.tmax) + '°/' + Math.round(w.tmin) + '°' +
+      (w.rh != null ? ' · υγρ. ' + w.rh + '%' : '') +
+      (w.wind != null ? ' · ' + wxDir(w.dir) + ' ' + Math.round(w.wind) + ' χλμ/ώ' : '')
+    : wxText(w);
+  return s ? '<span class="tiny muted" style="display:block;margin-top:2px">Καιρός: ' + s + '</span>' : '';
+}
 function eventRow(e, forHive, canDelete){
   var t = eventText(e, forHive);
-  return '<div class="li"><span style="width:8px;height:8px;border-radius:4px;background:' + t[2] + ';flex-shrink:0;align-self:flex-start;margin-top:8px"></span><span class="grow"><span class="t">' + esc(t[0]) + '</span><span class="small muted">' + fmtD(e.date) + (t[1] ? ' · ' + esc(t[1]) : '') + (!forHive && e.hives ? '<br>' + esc(hivesSummary(e.hives)) : '') + '</span></span>' +
+  return '<div class="li"><span style="width:8px;height:8px;border-radius:4px;background:' + t[2] + ';flex-shrink:0;align-self:flex-start;margin-top:8px"></span><span class="grow"><span class="t">' + esc(t[0]) + '</span><span class="small muted">' + fmtD(e.date) + (t[1] ? ' · ' + esc(t[1]) : '') + (!forHive && e.hives ? '<br>' + esc(hivesSummary(e.hives)) : '') + '</span>' + wxLine(e) + '</span>' +
     (canDelete ? '<button class="ibtn" data-a="delEvent" data-id="' + e.id + '" aria-label="Διαγραφή καταχώρισης">' + I.trash + '</button>' : '') + '</div>';
 }
 
@@ -5302,7 +5416,29 @@ A.saveBloom = function(){
   if (f.tm === '' || f.tp === '') { toast('Συμπλήρωσε μήνα και Αρχές/Μέσα/Τέλος για τη λήξη'); return; }
   if (!f.gives) { toast('Διάλεξε αν δίνει νέκταρ, γύρη ή νέκταρ & γύρη'); return; }
   var id = S.params.id || uid(), old = S.params.id ? S.blooms.filter(function(x){ return x.id === id; })[0] : null;
-  run(async function(){ await put('blooms', id, {apiary: f.apiary, plant: f.plant, fm: Number(f.fm), fp: Number(f.fp), tm: Number(f.tm), tp: Number(f.tp), gives: f.gives, created: old ? old.created : new Date().toISOString()}); back(); }, 'Η ανθοφορία αποθηκεύτηκε');
+  run(async function(){ await put('blooms', id, {apiary: f.apiary, plant: f.plant, fm: Number(f.fm), fp: Number(f.fp), tm: Number(f.tm), tp: Number(f.tp), gives: f.gives, obs: (old && old.obs) || {}, created: old ? old.created : new Date().toISOString()}); back(); }, 'Η ανθοφορία αποθηκεύτηκε');
+};
+A.obsMark = function(d){
+  var id = d.id || S.params.id, b = S.blooms.filter(function(x){ return x.id === id; })[0]; if (!b) return;
+  var t = today(), y = bYear(b, t), obs = fd(b.obs || {}), cur = fd(obs[y] || {});
+  cur[d.k] = t; obs[y] = cur;
+  run(async function(){ await patch('blooms', id, {obs: obs}); },
+    esc(b.plant) + ': ' + (d.k === 'f' ? 'έναρξη' : 'λήξη') + ' ' + fmtD(t));
+};
+A.obsDate = function(d, el){
+  var id = S.params.id, b = S.blooms.filter(function(x){ return x.id === id; })[0]; if (!b) return;
+  var obs = fd(b.obs || {}), cur = fd(obs[d.y] || {}), v = el.value;
+  if (v) cur[d.k] = v; else delete cur[d.k];
+  if (cur.f || cur.t) obs[d.y] = cur; else delete obs[d.y];
+  run(async function(){ await patch('blooms', id, {obs: obs}); }, v ? 'Η ημερομηνία καταχωρίστηκε' : 'Η ημερομηνία αφαιρέθηκε');
+};
+A.obsClear = function(d){
+  var id = S.params.id, b = S.blooms.filter(function(x){ return x.id === id; })[0]; if (!b) return;
+  S.confirm = {title:'Διαγραφή παρατήρησης;', text:'Οι πραγματικές ημερομηνίες της σεζόν ' + obsLabel(b, d.y) + ' για την «' + b.plant + '» θα διαγραφούν. Η εκτίμηση παραμένει.', yes:'Διαγραφή', danger:true, fn: function(){
+    var obs = fd(b.obs || {}); delete obs[d.y];
+    run(async function(){ await patch('blooms', id, {obs: obs}); }, 'Διαγράφηκε');
+  }};
+  render(true);
 };
 A.delBloom = function(){
   var id = S.params.id, b = S.blooms.filter(function(x){ return x.id === id; })[0]; if (!b) return;
@@ -5749,6 +5885,12 @@ document.addEventListener('click', function(e){
   fn(el.dataset, el, e);
 });
 document.addEventListener('change', function(e){ var el = e.target; var n = el.getAttribute('data-a-change'); if (n && A[n]) A[n](el.dataset, el, e); });
+/* Enter/κενό σε στοιχεία με role="button" που δεν είναι <button> */
+document.addEventListener('keydown', function(e){
+  if (e.key !== 'Enter' && e.key !== ' ') return;
+  var el = e.target;
+  if (el && el.getAttribute && el.getAttribute('role') === 'button' && el.dataset && el.dataset.a) { e.preventDefault(); el.click(); }
+});
 document.addEventListener('input', function(e){
   var el = e.target, ds = el.dataset;
   if (ds.lvl) { var v = Number(el.value); S.form[ds.lvl] = v; el.style.setProperty('--p', (v * 20) + '%'); el.setAttribute('aria-valuetext', LEVELS[v]); var lab = document.getElementById('lvv-' + ds.lvl); if (lab) lab.textContent = LEVELS[v]; return; }
