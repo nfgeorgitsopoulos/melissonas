@@ -2766,10 +2766,11 @@ async function wxStamp(ev){
   }
   return wxPick((wxc[k] || {}).rows || [], ev.date);
 }
+function wxBtn(a){ return '<a class="btn sm block" href="' + weatherUrl(a) + '" target="_blank" rel="noopener">' + I.sun + ' Καιρός</a>'; }
 function wxStrip(a){
   if (!a || a.lat == null) return '';
   var rows = wxGet(a), c = wxc[wxKey(a)];
-  if (!rows) return '<div class="tiny muted">' + (c && c.err ? 'Ο καιρός δεν φορτώθηκε.' : 'Φόρτωση καιρού…') + '</div>';
+  if (!rows) return (c && c.err) ? wxBtn(a) : '<div class="tiny muted">Φόρτωση καιρού…</div>';
   var t = today(), i = -1, q;
   for (q = 0; q < rows.length; q++) if (rows[q].date === t) { i = q; break; }
   if (i < 0) return '';
@@ -4724,8 +4725,7 @@ VIEWS.settings = function(){
       '<button class="btn block" data-a="exportJson">Λήψη αντιγράφου (.json)</button>' +
       '<button class="btn block" data-a="exportCsv">Λήψη καταχωρίσεων για Excel (.csv)</button>' +
       '<label class="btn block" for="imp">Επαναφορά από αντίγραφο…</label><input id="imp" type="file" accept=".json,application/json" data-a-change="importJson" hidden>' +
-      '<button class="btn block" data-a="wxFill">' + I.sun + ' Συμπλήρωση ιστορικού καιρού</button>' +
-      '<span class="tiny muted">Κατεβάζει τον καιρό που επικρατούσε τις ημέρες των παλιών επιθεωρήσεων και τρύγων και τον προσθέτει σε αυτές. Γίνεται μία φορά.</span>' +
+      wxImportBox() +
       '<span class="tiny muted">Η επαναφορά αντικαθιστά όλα τα τρέχοντα δεδομένα με αυτά του αρχείου.</span></div>' +
     '<p class="tiny muted" style="margin:0">Τα δεδομένα αποθηκεύονται στον λογαριασμό σου στο claude.ai και είναι ίδια σε κάθε συσκευή όπου ανοίγεις την εφαρμογή.</p></div>';
 };
@@ -5573,53 +5573,132 @@ async function save(filename, data){
   try { await dl.save({filename: filename, data: data}); toast('Το αρχείο αποθηκεύτηκε'); return true; }
   catch (e) { if (e && e.code === 'declined') return; if (e && e.code === 'rate_limited') toast('Περίμενε λίγο και δοκίμασε ξανά'); else toast('Η λήψη δεν ολοκληρώθηκε'); }
 }
-A.wxFill = function(){
-  var todo = {}, miss = 0;
+/* ---------- εισαγωγή καιρού από αρχείο Open-Meteo ---------- */
+function wxNeeded(){
+  var out = {};
   Object.keys(S.logs).forEach(function(k){
     (S.logs[k] || []).forEach(function(e){
       if (e.wx || (e.type !== 'inspection' && e.type !== 'harvest')) return;
-      var x = e.hives && e.hives.length && hive(e.hives[0]); if (!x) { miss++; return; }
-      var a = apiary(x.apiary); if (!a || a.lat == null) { miss++; return; }
-      var t = todo[a.id] = todo[a.id] || {ap: a, min: e.date, max: e.date, n: 0};
+      var x = e.hives && e.hives.length && hive(e.hives[0]); if (!x) return;
+      var a = apiary(x.apiary); if (!a || a.lat == null) return;
+      var t = out[a.id] = out[a.id] || {ap: a, min: e.date, max: e.date, n: 0};
       if (e.date < t.min) t.min = e.date;
       if (e.date > t.max) t.max = e.date;
       t.n++;
     });
   });
-  var ids = Object.keys(todo);
-  if (!ids.length) { toast(miss ? 'Δεν υπάρχουν καταχωρίσεις με συντεταγμένες' : 'Όλες οι καταχωρίσεις έχουν ήδη καιρό'); return; }
-  run(async function(){
-    var got = 0, fail = 0;
-    for (var i = 0; i < ids.length; i++) {
-      var t = todo[ids[i]], a = t.ap, rows;
-      try {
-        rows = await wxFetch('https://historical-forecast-api.open-meteo.com/v1/forecast?latitude=' + a.lat +
-          '&longitude=' + a.lon + '&start_date=' + addDays(t.min, -7) + '&end_date=' + t.max + '&' + WX_VARS);
-      } catch (e) { fail += t.n; continue; }
-      var byDate = {};
-      rows.forEach(function(r, n){
-        var sum = 0, q;
-        for (q = Math.max(0, n - 6); q <= n; q++) sum += rows[q].rain || 0;
-        byDate[r.date] = {tmax: r.tmax, tmin: r.tmin, rh: r.rh, rain: r.rain,
-          rain7: Math.round(sum * 10) / 10, wind: r.wind, dir: r.dir};
+  return out;
+}
+function wxCsvUrl(a, from, to){
+  return 'https://archive-api.open-meteo.com/v1/archive?latitude=' + a.lat + '&longitude=' + a.lon +
+    '&start_date=' + from + '&end_date=' + to +
+    '&daily=temperature_2m_max,temperature_2m_min,precipitation_sum,wind_speed_10m_max,wind_direction_10m_dominant' +
+    '&hourly=relative_humidity_2m&timezone=Europe%2FAthens&format=csv';
+}
+function wxImportBox(){
+  var need = wxNeeded(), ids = Object.keys(need), h = '';
+  h += '<div class="note n-acc" style="display:block"><b>Καιρός στις καταχωρίσεις</b><br><span class="tiny">';
+  if (!ids.length) {
+    h += 'Όλες οι επιθεωρήσεις και οι τρύγοι με θέση μελισσοκομείου έχουν ήδη καιρό.</span></div>';
+    return h;
+  }
+  var tot = 0;
+  ids.forEach(function(k){ tot += need[k].n; });
+  h += plural(tot, 'καταχώριση δεν έχει', 'καταχωρίσεις δεν έχουν') + ' ακόμα καιρό. ' +
+    'Κατέβασε το αρχείο από τον σύνδεσμο και δώσ’ το πίσω εδώ.</span>';
+  ids.forEach(function(k){
+    var t = need[k];
+    h += '<a class="btn sm block" style="margin-top:8px" href="' + wxCsvUrl(t.ap, addDays(t.min, -7), t.max) +
+      '" target="_blank" rel="noopener">1. Κατέβασμα · ' + esc(t.ap.name) + ' (' + plural(t.n, 'καταχώριση', 'καταχωρίσεις') + ')</a>';
+  });
+  h += '<label class="btn block" style="margin-top:8px" for="wximp">2. Άνοιγμα του αρχείου…</label>' +
+    '<input id="wximp" type="file" accept=".csv,.json,text/csv,application/json" data-a-change="wxImport" hidden>' +
+    '</div>';
+  return h;
+}
+/* ανεκτικός αναλυτής: δέχεται CSV ή JSON, ημερήσιες ή/και ωριαίες στήλες */
+function wxParseFile(txt){
+  var daily = {}, rhDay = {};
+  function note(day, key, val){
+    if (val === '' || val == null || isNaN(Number(val))) return;
+    (daily[day] = daily[day] || {})[key] = Number(val);
+  }
+  if (txt.replace(/^﻿/, '').charAt(0) === '{') {
+    var j = JSON.parse(txt), rows = wxParse(j);
+    rows.forEach(function(r){ daily[r.date] = {tmax: r.tmax, tmin: r.tmin, rain: r.rain, wind: r.wind, dir: r.dir, rh: r.rh}; });
+    return daily;
+  }
+  var lines = txt.replace(/\r/g, '').split('\n'), map = null, sep = ',';
+  for (var i = 0; i < lines.length; i++) {
+    var ln = lines[i]; if (!ln.trim()) { map = null; continue; }
+    if (ln.indexOf(';') >= 0 && ln.indexOf(',') < 0) sep = ';';
+    var cells = ln.split(sep);
+    if (/^\s*"?time"?\s*$/i.test(cells[0]) || /^time\b/i.test(cells[0].replace(/"/g, ''))) {
+      map = {};
+      cells.forEach(function(c, n){
+        c = c.replace(/"/g, '').toLowerCase();
+        if (/temperature_2m_max/.test(c)) map.tmax = n;
+        else if (/temperature_2m_min/.test(c)) map.tmin = n;
+        else if (/precipitation_sum/.test(c)) map.rain = n;
+        else if (/wind_speed_10m_max/.test(c)) map.wind = n;
+        else if (/wind_direction_10m_dominant/.test(c)) map.dir = n;
+        else if (/relative_humidity_2m_mean/.test(c)) map.rh = n;
+        else if (/relative_humidity_2m/.test(c)) map.rhh = n;
       });
-      var touched = {};
+      continue;
+    }
+    if (!map) continue;
+    var t = cells[0].replace(/"/g, '').trim();
+    var day = t.slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) continue;
+    if (map.rhh != null && t.length > 10) {
+      var v = Number(cells[map.rhh]);
+      if (!isNaN(v)) (rhDay[day] = rhDay[day] || []).push(v);
+      continue;
+    }
+    ['tmax','tmin','rain','wind','dir','rh'].forEach(function(k){ if (map[k] != null) note(day, k, cells[map[k]]); });
+  }
+  Object.keys(rhDay).forEach(function(day){
+    var r = rhDay[day], sum = 0, q;
+    for (q = 0; q < r.length; q++) sum += r[q];
+    (daily[day] = daily[day] || {}).rh = Math.round(sum / r.length);
+  });
+  return daily;
+}
+A.wxImport = function(d, el){
+  var file = el.files && el.files[0]; el.value = '';
+  if (!file) return;
+  var rd = new FileReader();
+  rd.onload = function(){
+    var daily;
+    try { daily = wxParseFile(String(rd.result)); }
+    catch (e) { toast('Το αρχείο δεν διαβάστηκε'); return; }
+    var days = Object.keys(daily).sort();
+    if (!days.length) { toast('Δεν βρέθηκαν δεδομένα καιρού στο αρχείο'); return; }
+    var acc = {}, run7 = 0;
+    days.forEach(function(day, n){
+      var sum = 0, q;
+      for (q = Math.max(0, n - 6); q <= n; q++) sum += daily[days[q]].rain || 0;
+      acc[day] = Object.assign({}, daily[day], {rain7: Math.round(sum * 10) / 10});
+    });
+    run(async function(){
+      var got = 0, touched = {};
       Object.keys(S.logs).forEach(function(k){
         var items = (S.logs[k] || []).slice(), ch = false;
-        for (var j = 0; j < items.length; j++) {
-          var e = items[j];
+        for (var j2 = 0; j2 < items.length; j2++) {
+          var e = items[j2];
           if (e.wx || (e.type !== 'inspection' && e.type !== 'harvest')) continue;
-          var x = e.hives && e.hives.length && hive(e.hives[0]);
-          if (!x || x.apiary !== a.id) continue;
-          var w = byDate[e.date]; if (!w) continue;
-          items[j] = Object.assign({}, e, {wx: w}); ch = true; got++;
+          var w = acc[e.date]; if (!w || w.tmax == null) continue;
+          items[j2] = Object.assign({}, e, {wx: w}); ch = true; got++;
         }
         if (ch) { S.logs[k] = items; touched[k] = items; }
       });
       for (var mk in touched) await put('log', mk, {items: touched[mk]});
-    }
-    toast(got ? 'Προστέθηκε καιρός σε ' + plural(got, 'καταχώριση', 'καταχωρίσεις') + (fail ? ' · ' + fail + ' απέτυχαν' : '') : 'Δεν βρέθηκε καιρός για αυτές τις ημερομηνίες');
-  });
+      toast(got ? 'Προστέθηκε καιρός σε ' + plural(got, 'καταχώριση', 'καταχωρίσεις') :
+        'Το αρχείο δεν κάλυπτε καμία καταχώριση χωρίς καιρό');
+    });
+  };
+  rd.readAsText(file);
 };
 A.exportJson = function(){ save('melissonas-' + today() + '.json', JSON.stringify(dump(), null, 1)).then(function(ok){ if (ok) { S.settings.lastExport = today(); render(true); run(saveSettings); } }); };
 A.bkLater = function(){ S.bkSnooze = true; render(true); };
