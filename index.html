@@ -114,6 +114,9 @@ button.li:active,a.li:active{background:var(--sunk)}
 .between{display:flex;align-items:center;justify-content:space-between;gap:10px}
 .wrapr{display:flex;flex-wrap:wrap;gap:8px}
 .grid2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+.actrow{display:flex;gap:8px}
+.actrow>*{flex:1 1 0;min-width:0;padding:0 8px;gap:6px;white-space:nowrap;overflow:hidden}
+.actrow svg{flex-shrink:0}
 .grid3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
 .grid4{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
 .ibtn{width:44px;height:44px;border-radius:22px;border:none;background:transparent;color:var(--fg);display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;text-decoration:none}
@@ -2769,11 +2772,21 @@ async function wxStamp(ev){
   }
   return wxPick((wxc[k] || {}).rows || [], ev.date);
 }
-function wxBtn(a){ return '<a class="btn sm block" href="' + weatherUrl(a) + '" target="_blank" rel="noopener">' + I.sun + ' Καιρός</a>'; }
+function wxBtn(a){ return '<a class="btn sm" href="' + weatherUrl(a) + '" target="_blank" rel="noopener">' + I.sun + ' Καιρός</a>'; }
+/* true όταν η πρόγνωση δεν ήρθε και δεν υπάρχει τίποτα αποθηκευμένο */
+function wxErr(a){ var c = a && a.lat != null ? wxc[wxKey(a)] : null; return !!(c && c.err && !c.rows); }
+/* μία σειρά με όσα κουμπιά ισχύουν για το μελισσοκομείο */
+function apActions(a, extra){
+  var b = [];
+  if (a.lat != null && wxErr(a)) b.push(wxBtn(a));
+  if (hasLoc(a)) b.push('<a class="btn sm" href="' + esc(mapUrl(a)) + '" target="_blank" rel="noopener">' + I.map + ' Χάρτης</a>');
+  if (extra) b.push(extra);
+  return b.length ? '<div class="actrow">' + b.join('') + '</div>' : '';
+}
 function wxStrip(a){
   if (!a || a.lat == null) return '';
   var rows = wxGet(a), c = wxc[wxKey(a)];
-  if (!rows) return (c && c.err) ? wxBtn(a) : '<div class="tiny muted">Φόρτωση καιρού…</div>';
+  if (!rows) return (c && c.err) ? '' : '<div class="tiny muted">Φόρτωση καιρού…</div>';
   var t = today(), i = -1, q;
   for (q = 0; q < rows.length; q++) if (rows[q].date === t) { i = q; break; }
   if (i < 0) return '';
@@ -3190,7 +3203,7 @@ VIEWS.home = function(){
       (hs.length ? '<div class="wrapr">' + (c.strong ? '<span class="badge b-ok">' + c.strong + ' δυνατά</span>' : '') + (c.medium ? '<span class="badge b-mid">' + c.medium + ' μέτρια</span>' : '') + (c.weak ? '<span class="badge b-bad">' + c.weak + ' αδύναμα</span>' : '') + '</div>' : '') +
       bloomLine(a.id) +
       '<div class="small muted">Τελευταία επιθεώρηση: ' + (last ? relD(last) : '—') + '</div>' +
-      (hasLoc(a) ? wxStrip(a) + '<a class="btn sm block" href="' + esc(mapUrl(a)) + '" target="_blank" rel="noopener">' + I.map + ' Χάρτης</a>'
+      (hasLoc(a) ? wxStrip(a) + apActions(a)
         : '<button class="link" data-a="go" data-v="apiaryForm" data-id="' + a.id + '">' + I.pin + ' Πρόσθεσε θέση για καιρό και χάρτη</button>') +
       '</div>';
   });
@@ -3213,8 +3226,7 @@ VIEWS.apiaries = function(){
         hcounts(all) + '</span>' +
       '<span class="tiny muted">' + (a.lat != null ? a.lat + ', ' + a.lon : a.mapLink ? 'Σύνδεσμος Google Maps' : 'Χωρίς θέση') + '</span></span><span class="small" style="color:var(--accent-ink)">Επεξεργασία</span></button>' +
       bloomLine(a.id) +
-      wxStrip(a) + '<div class="grid2">' + (hasLoc(a) ? '<a class="btn sm" href="' + esc(mapUrl(a)) + '" target="_blank" rel="noopener">' + I.map + ' Χάρτης</a>' : '<span></span>') +
-      '<button class="btn sm" data-a="go" data-v="hives" data-ap="' + a.id + '">' + I.hive + ' Κυψέλες</button></div></div>';
+      wxStrip(a) + apActions(a, '<button class="btn sm" data-a="go" data-v="hives" data-ap="' + a.id + '">' + I.hive + ' Κυψέλες</button>') + '</div>';
   });
   h += '<p class="tiny muted" style="margin:0">Ο καιρός είναι από το Open-Meteo, για τις συντεταγμένες κάθε μελισσοκομείου. Πάτησέ τον για αναλυτική πρόγνωση στο yr.no.</p>';
   return h + '</div>';
